@@ -57,17 +57,7 @@ OpenResearcher is a multi-turn environment. Agents search the web, fetch URLs fo
 
 ## Environment Difficulty
 
-The original paper evaluates systems via human preference on 30 questions and GPT-4o preference on 109 questions:
-
-| System | Richness (W/T/L) | Relevance (W/T/L) |
-|--------|------------------|-------------------|
-| OpenResearcher | 25/4/1 | 15/13/2 |
-| Perplexity AI | baseline | baseline |
-| Phind | 15/7/8 | 5/13/12 |
-| You.com | - | 4/13/13 |
-| Naive RAG | 14/8/8 | - |
-
-OpenResearcher achieved 25 wins vs 1 loss on information richness against Perplexity AI. Human annotator agreement was 90.67%.
+[Put environment difficulty here once available]
 
 ## Other Environment Requirements
 
