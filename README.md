@@ -1,7 +1,6 @@
 # OpenResearcher
 
-[![⭐ OpenReward](https://img.shields.io/badge/%E2%AD%90%20OpenReward-Environment-f7e6cc)](https://openreward.ai/GeneralReasoning/OpenResearcher)
-[![Hugging Face](https://img.shields.io/badge/Hugging%20Face-Dataset-orange)](https://huggingface.co/datasets/OpenResearcher/OpenResearcher-Dataset)
+[![⭐ OpenReward Environment](https://img.shields.io/badge/%E2%AD%90%20OpenReward-Environment-f7e6cc)](https://openreward.ai/GeneralReasoning/OpenResearcher) [![Hugging Face Dataset](https://img.shields.io/badge/Hugging%20Face-Dataset-orange)](https://huggingface.co/datasets/OpenResearcher/OpenResearcher-Dataset)
 
 ## Description
 
@@ -15,7 +14,7 @@ OpenResearcher is an environment for evaluating research question answering thro
 
 ## Compute Requirements
 
-Agents are given a standard environment with no sandbox or file system access.
+This is a multi-turn environment with no sandbox. Agents interact through web search and URL fetching tools only.
 
 ## License
 
@@ -23,33 +22,55 @@ Agents are given a standard environment with no sandbox or file system access.
 
 ## Tasks
 
-One split: `train` (6,102 research questions)
+There is one split in this environment:
+
+- **Train**: 6,102 research questions
+
+Each task presents a research question requiring web search to answer. Questions span technical research, historical facts, art history, legislative research, and other domains.
 
 ## Reward Structure
 
-Multi-turn (agent searches, then submits). Agent uses `web_search` and `fetch_url` to research, then calls `submit_answer` with explanation, exact answer, and confidence. LLM grader (gpt-5-mini) evaluates semantic correctness. Binary reward: 1.0 if correct, 0.0 if incorrect.
+This is a multi-turn environment with binary reward:
+
+- **1.0** — Correct answer (semantically equivalent to the reference, as judged by gpt-5-mini)
+- **0.0** — Incorrect answer
+
+The agent uses `web_search` and `fetch_url` to research, then calls `submit_answer` with an explanation, exact answer, and confidence score. The LLM grader evaluates semantic equivalence, accepting minor formatting and phrasing differences.
 
 ## Data
 
-`openresearcher_seed42.parquet` sourced from [HuggingFace OpenResearcher/OpenResearcher-Dataset](https://huggingface.co/datasets/OpenResearcher/OpenResearcher-Dataset) (seed_42 config). Stored on the OpenReward platform.
+Data consists of a single Parquet file (`openresearcher_seed42.parquet`) containing 6,102 research questions with ground truth answers. Each instance includes a question ID, the research question text, and the correct answer.
+
+Source: [OpenResearcher/OpenResearcher-Dataset](https://huggingface.co/datasets/OpenResearcher/OpenResearcher-Dataset) (seed_42 configuration)
 
 ## Tools
 
-- **`web_search`**: Search the web via Tavily API, returns top 5 results
-- **`fetch_url`**: Fetch and extract text content from a URL, max 8000 chars
-- **`submit_answer`**: Submit explanation, exact answer, and confidence for grading
+| Tool | Description |
+|------|-------------|
+| `web_search` | Search the web via Tavily API. Returns top 5 results with titles, URLs, and snippets. |
+| `fetch_url` | Fetch and extract text content from a URL. Truncates to 8,000 characters. |
+| `submit_answer` | Submit explanation, exact answer, and confidence score for LLM grading. Ends the episode. |
 
 ## Time Horizon
 
-Multi-turn. Agents search the web, fetch URLs, and submit a final answer.
+OpenResearcher is a multi-turn environment. Agents search the web, fetch URLs for detailed content, and submit a final answer when ready.
 
 ## Environment Difficulty
 
-Tasks span diverse domains including technical research, historical facts, art history, and legislative research, requiring multi-hop reasoning and web search proficiency.
+The original paper evaluates OpenResearcher against baselines using GPT-4 series models for pairwise comparison:
+
+- OpenResearcher significantly outperforms Perplexity AI in head-to-head comparisons
+- Demonstrates better performance than Naive RAG across all metrics (information correctness, relevance, and richness)
+- Questions require multi-hop reasoning across technical research, historical facts, art history, and legislative domains
+
+The benchmark tests agents' ability to search effectively, synthesize information from multiple sources, and formulate accurate answers.
 
 ## Other Environment Requirements
 
-OpenAI API key required for grading. Tavily API key required for web search. Pass via `secrets={"openai_api_key": "...", "tavily_api_key": "..."}`.
+- **OpenAI API key**: Required for LLM-based answer grading via gpt-5-mini
+- **Tavily API key**: Required for web search and URL content extraction
+
+Pass via `secrets={"openai_api_key": "...", "tavily_api_key": "..."}`.
 
 ## Safety
 
