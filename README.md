@@ -51,6 +51,8 @@ Source: [OpenResearcher/OpenResearcher-Dataset](https://huggingface.co/datasets/
 | `fetch_url` | Fetch and extract text content from a URL. Truncates to 8,000 characters. |
 | `submit_answer` | Submit explanation, exact answer, and confidence score for LLM grading. Ends the episode. |
 
+Note that the `fetch_url` and `web_search` tools require Tavily, but are optional. If you want to use a different provider for search you can exclude these tools and use external tools instead.
+
 ## Time Horizon
 
 OpenResearcher is a multi-turn environment. Agents search the web, fetch URLs for detailed content, and submit a final answer when ready.
