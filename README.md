@@ -4,7 +4,7 @@
 
 ## Description
 
-OpenResearcher is an environment for evaluating research question answering through web search. Based on the OpenResearcher dataset, agents are given diverse research questions and must use web search and URL fetching to find and synthesize answers. An LLM grader evaluates semantic correctness.
+OpenResearcher is an ORS environment for evaluating research question answering through web search. Based on the OpenResearcher dataset, agents are given diverse research questions and must use web search and URL fetching to find and synthesize answers. An LLM grader evaluates semantic correctness.
 
 ## Capabilities
 
