@@ -332,6 +332,33 @@ Your task is to research this question using web search and provide a comprehens
             finished=False
         )
 
+    @staticmethod
+    def _parse_verdict(grading_text: str) -> bool:
+        """Read the grader's CORRECT/INCORRECT verdict from its final line.
+
+        The grader is prompted to end with the verdict alone on a new line, so we
+        scan upward from the end for the first line that resolves to one. The
+        INCORRECT check runs first because CORRECT is its suffix.
+
+        Searching the whole response for "CORRECT" cannot work: "INCORRECT"
+        contains it, so an analysis calling an answer "not incorrect" — ordinary
+        phrasing for a near-miss the grader still accepts — scores a CORRECT
+        verdict 0.0.
+        """
+        for line in reversed(grading_text.splitlines()):
+            token = line.strip().strip("*_#`.:!-").strip().upper()
+            if not token:
+                continue
+            if token.endswith("INCORRECT"):
+                return False
+            if token.endswith("CORRECT"):
+                return True
+
+        # No verdict line at all — treat as incorrect, but say so, since a silent
+        # 0.0 here is indistinguishable from a genuinely wrong answer.
+        print(f"GRADER WARNING: no CORRECT/INCORRECT verdict found in grader response: {grading_text[:200]!r}")
+        return False
+
     async def _grade_answer(
         self,
         explanation: str,
@@ -367,10 +394,7 @@ Your task is to research this question using web search and provide a comprehens
         )
 
         grading_text = response.choices[0].message.content or ""
-
-        # Parse verdict (case-insensitive, must have CORRECT without INCORRECT)
-        upper_text = grading_text.upper()
-        is_correct = "CORRECT" in upper_text and "INCORRECT" not in upper_text
+        is_correct = self._parse_verdict(grading_text)
 
         return {
             "is_correct": is_correct,
