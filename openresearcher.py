@@ -255,13 +255,14 @@ Your task is to research this question using web search and provide a comprehens
             ),
         )
 
-        # Format results
+        # reward stays None throughout: retrieval is not a scoring event, and 0.0
+        # would assert a zero score on every search. submit_answer does the scoring.
         results = response.get("results", [])
         if not results:
             return ToolOutput(
                 blocks=[TextBlock(type="text", text="No search results found.")],
                 metadata={"query": params.query, "results": []},
-                reward=0.0,
+                reward=None,
                 finished=False
             )
 
@@ -282,7 +283,7 @@ Your task is to research this question using web search and provide a comprehens
                 "results": results,
                 "count": len(results)
             },
-            reward=0.0,
+            reward=None,
             finished=False
         )
 
@@ -297,7 +298,7 @@ Your task is to research this question using web search and provide a comprehens
             lambda: self.tavily_client.extract(urls=[params.url]),
         )
 
-        # Get the extracted content
+        # reward stays None throughout: see web_search.
         results = response.get("results", [])
         if not results:
             # No result object at all — usually a fetch failure (DNS/timeout/
@@ -309,7 +310,7 @@ Your task is to research this question using web search and provide a comprehens
                     f"unreachable, blocked, or invalid. Try a different source."
                 ))],
                 metadata={"url": params.url, "results": []},
-                reward=0.0,
+                reward=None,
                 finished=False
             )
 
@@ -328,7 +329,7 @@ Your task is to research this question using web search and provide a comprehens
                 "url": params.url,
                 "length": len(raw_content)
             },
-            reward=0.0,
+            reward=None,
             finished=False
         )
 
