@@ -13,9 +13,9 @@ import openai
 from pydantic import BaseModel, Field
 from typing import Dict, List
 
-from tavily import AsyncTavilyClient
 
 from openreward.environments import Environment, JSONObject, TextBlock, ToolOutput, tool
+from openreward.toolsets import WebToolset
 
 from constants import OPENRESEARCHER_PARQUET
 
@@ -49,16 +49,6 @@ class OpenResearcherTaskSpec(BaseModel):
     qid: str  # Question ID
     question: str  # Research question
     answer: str  # Ground truth answer
-
-
-class WebSearchInput(BaseModel):
-    """Parameters for web_search tool"""
-    query: str = Field(..., description="Search query for research")
-
-
-class FetchUrlInput(BaseModel):
-    """Parameters for fetch_url tool"""
-    url: str = Field(..., description="URL to fetch and extract content from")
 
 
 class SubmitAnswerParams(BaseModel):
@@ -136,11 +126,24 @@ class OpenResearcher(Environment):
     Agent workflow:
     1. Receives a research question requiring web search
     2. Uses web_search tool to find information
-    3. Uses fetch_url tool to get detailed content from URLs
+    3. Uses web_fetch tool to get detailed content from URLs
     4. Submits answer with explanation, exact_answer, and confidence
     5. Answer is graded by gpt-5-mini comparing to correct answer
     6. Receives reward (1.0 correct, 0.0 incorrect) and feedback
     """
+
+    # web_search / web_fetch come from the SDK rather than being hand-rolled here.
+    # Which provider answers is process configuration (OPENREWARD_SEARCH_BACKEND,
+    # default "backsearch"), so changing search provider needs no change here.
+    #
+    # The toolset owns the error split too: an unfetchable page stays tool output
+    # the agent can act on, while a missing key or exhausted quota raises so the
+    # rollout ends with a blank reward rather than a score that reads as a bad answer.
+    toolsets = [WebToolset]
+
+    # Search hits keep their snippets, as the prompt promises. Off in the SDK by
+    # default, which would force a fetch per candidate just to triage results.
+    web_include_snippets = True
 
     def __init__(self, task_spec: JSONObject, secrets: dict[str, str] = {}) -> None:
         """
@@ -148,7 +151,8 @@ class OpenResearcher(Environment):
 
         Args:
             task_spec: Task specification with qid, question, answer
-            secrets: Must contain "openai_api_key" for grading and "tavily_api_key" for search
+            secrets: Must contain "openai_api_key" for grading; search credentials
+                (api_key / tavily_api_key) are forwarded to the search backend
 
         Raises:
             ValueError: If required API keys missing or task_spec invalid
@@ -161,19 +165,16 @@ class OpenResearcher(Environment):
         if not openai_api_key:
             raise ValueError(
                 "openai_api_key required in secrets parameter for LLM grading. "
-                "Pass secrets={'openai_api_key': 'sk-...', 'tavily_api_key': 'tvly-...'} when creating session."
+                "Pass secrets={'openai_api_key': 'sk-...'} when creating session."
             )
 
-        # Require Tavily API key for web search - fail fast if missing
-        tavily_api_key = secrets.get("tavily_api_key")
-        if not tavily_api_key:
-            raise ValueError(
-                "tavily_api_key required in secrets parameter for web search. "
-                "Pass secrets={'openai_api_key': 'sk-...', 'tavily_api_key': 'tvly-...'} when creating session."
-            )
+        # Read live by WebToolset on every tool call, so the search backend takes its
+        # credentials from the session rather than the server process. The configured
+        # backend picks the key it needs: `api_key` for backsearch, `tavily_api_key`
+        # for tavily. No up-front check — which key is required depends on the backend.
+        self.search_secrets = secrets
 
         self.openai_client = openai.AsyncClient(api_key=openai_api_key)
-        self.tavily_client = AsyncTavilyClient(api_key=tavily_api_key)
 
     @classmethod
     def list_splits(cls) -> list[str]:
@@ -219,119 +220,6 @@ class OpenResearcher(Environment):
 Your task is to research this question using web search and provide a comprehensive answer."""
 
         return [TextBlock(type="text", text=prompt_text)]
-
-    async def _tavily_with_retry(self, label: str, call, *, max_attempts: int = 4):
-        """Call Tavily with exponential backoff, re-raising on persistent failure.
-
-        A genuinely-down dependency (exhausted quota, auth error) exhausts the
-        retries and re-raises, so the SDK marks the call ToolFailed and ends the
-        rollout. `call` returns a fresh awaitable on each attempt.
-        """
-        last_exc: Exception | None = None
-        for attempt in range(max_attempts):
-            try:
-                return await call()
-            except Exception as e:
-                last_exc = e
-                if attempt < max_attempts - 1:
-                    wait = min(2 ** attempt, 30)
-                    print(f"TAVILY ERROR: {label} | {e} | retry in {wait}s (attempt {attempt + 1}/{max_attempts})")
-                    await asyncio.sleep(wait)
-        assert last_exc is not None
-        raise last_exc
-
-    @tool
-    async def web_search(self, params: WebSearchInput) -> ToolOutput:
-        """
-        Search the web using Tavily. Returns search results with titles, URLs, and snippets.
-        Use fetch_url tool to get full content from specific URLs if needed.
-        """
-        response = await self._tavily_with_retry(
-            f"search({params.query!r})",
-            lambda: self.tavily_client.search(
-                query=params.query,
-                search_depth="basic",
-                max_results=5
-            ),
-        )
-
-        # reward stays None throughout: retrieval is not a scoring event, and 0.0
-        # would assert a zero score on every search. submit_answer does the scoring.
-        results = response.get("results", [])
-        if not results:
-            return ToolOutput(
-                blocks=[TextBlock(type="text", text="No search results found.")],
-                metadata={"query": params.query, "results": []},
-                reward=None,
-                finished=False
-            )
-
-        # Build display text
-        display_parts = [f"Search results for: {params.query}\n"]
-        for i, result in enumerate(results, 1):
-            title = result.get("title", "No title")
-            url = result.get("url", "")
-            snippet = result.get("content", "")
-            display_parts.append(f"{i}. {title}\n   URL: {url}\n   {snippet}\n")
-
-        display_text = "\n".join(display_parts)
-
-        return ToolOutput(
-            blocks=[TextBlock(type="text", text=display_text)],
-            metadata={
-                "query": params.query,
-                "results": results,
-                "count": len(results)
-            },
-            reward=None,
-            finished=False
-        )
-
-    @tool
-    async def fetch_url(self, params: FetchUrlInput) -> ToolOutput:
-        """
-        Fetch and return the full text content from a specific URL using Tavily's extract method.
-        Use this after web_search to get complete information from a page.
-        """
-        response = await self._tavily_with_retry(
-            f"extract({params.url!r})",
-            lambda: self.tavily_client.extract(urls=[params.url]),
-        )
-
-        # reward stays None throughout: see web_search.
-        results = response.get("results", [])
-        if not results:
-            # No result object at all — usually a fetch failure (DNS/timeout/
-            # blocked) or an unsupported URL, which the agent can recover from
-            # by picking a different source.
-            return ToolOutput(
-                blocks=[TextBlock(type="text", text=(
-                    f"No content extracted from {params.url}. The URL may be "
-                    f"unreachable, blocked, or invalid. Try a different source."
-                ))],
-                metadata={"url": params.url, "results": []},
-                reward=None,
-                finished=False
-            )
-
-        # Get the first result (we only passed one URL)
-        result = results[0]
-        raw_content = result.get("raw_content", "")
-
-        # Truncate if too long
-        max_length = 8000
-        if len(raw_content) > max_length:
-            raw_content = raw_content[:max_length] + "...\n[Content truncated]"
-
-        return ToolOutput(
-            blocks=[TextBlock(type="text", text=f"Content from {params.url}:\n\n{raw_content}")],
-            metadata={
-                "url": params.url,
-                "length": len(raw_content)
-            },
-            reward=None,
-            finished=False
-        )
 
     @staticmethod
     def _parse_verdict(grading_text: str) -> bool:

@@ -2,7 +2,7 @@
 Test agent for OpenResearcher environment.
 
 Demonstrates how to use the OpenResearcher environment with OpenAI's Responses API
-and Tavily-powered search tools for local testing.
+and the SDK's search tools for local testing.
 """
 
 import json
@@ -19,7 +19,7 @@ async def main():
 
     This script:
     1. Connects to local OpenResearcher environment server
-    2. Gets available tools (web_search, fetch_url, submit_answer)
+    2. Gets available tools (web_search, web_fetch, submit_answer)
     3. Runs the agent on the first task
     4. Displays results and reward
     """
@@ -28,7 +28,9 @@ async def main():
     ENV_NAME = "EnvCommons/openresearcher"
     SPLIT = "train"
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    # Optional: whichever the server's OPENREWARD_SEARCH_BACKEND needs.
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+    OPENREWARD_API_KEY = os.getenv("OPENREWARD_API_KEY")
 
     if not OPENAI_API_KEY:
         raise ValueError(
@@ -36,11 +38,6 @@ async def main():
             "Set with: export OPENAI_API_KEY='sk-...'"
         )
 
-    if not TAVILY_API_KEY:
-        raise ValueError(
-            "TAVILY_API_KEY environment variable required. "
-            "Set with: export TAVILY_API_KEY='tvly-...'"
-        )
 
     # Initialize clients
     or_client = AsyncOpenReward()
@@ -57,7 +54,7 @@ async def main():
     tasks = await environment.list_tasks(split=SPLIT)
     print(f"Found {len(tasks)} tasks")
 
-    # Get environment tools (web_search, fetch_url, submit_answer)
+    # Get environment tools (web_search, web_fetch, submit_answer)
     tools = await environment.list_tools(format="openai")
 
     # Test first task
@@ -73,7 +70,8 @@ async def main():
         task=task,
         secrets={
             "openai_api_key": OPENAI_API_KEY,
-            "tavily_api_key": TAVILY_API_KEY
+            **({"tavily_api_key": TAVILY_API_KEY} if TAVILY_API_KEY else {}),
+            **({"api_key": OPENREWARD_API_KEY} if OPENREWARD_API_KEY else {}),
         }
     ) as session:
         # Get prompt
@@ -113,7 +111,7 @@ async def main():
                     elif item.name == "web_search":
                         args = json.loads(str(item.arguments))
                         print(f"   Query: {args.get('query', '')}")
-                    elif item.name == "fetch_url":
+                    elif item.name == "web_fetch":
                         args = json.loads(str(item.arguments))
                         print(f"   URL: {args.get('url', '')}")
 
@@ -143,7 +141,7 @@ async def main():
                             print(f"\n📝 Feedback:")
                             print("   " + "\n   ".join(tool_result.blocks[0].text.split("\n")))
                     else:
-                        # For web_search and fetch_url, show abbreviated output
+                        # For web_search and web_fetch, show abbreviated output
                         if tool_result.blocks:
                             output_preview = tool_result.blocks[0].text[:150].replace("\n", " ")
                             print(f"   Result: {output_preview}...")

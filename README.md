@@ -35,7 +35,7 @@ This is a multi-turn environment with binary reward:
 - **1.0** — Correct answer (semantically equivalent to the reference, as judged by gpt-5-mini)
 - **0.0** — Incorrect answer
 
-The agent uses `web_search` and `fetch_url` to research, then calls `submit_answer` with an explanation, exact answer, and confidence score. The LLM grader evaluates semantic equivalence, accepting minor formatting and phrasing differences.
+The agent uses `web_search` and `web_fetch` to research, then calls `submit_answer` with an explanation, exact answer, and confidence score. The LLM grader evaluates semantic equivalence, accepting minor formatting and phrasing differences.
 
 ## Data
 
@@ -48,10 +48,10 @@ Source: [OpenResearcher/OpenResearcher-Dataset](https://huggingface.co/datasets/
 | Tool | Description |
 |------|-------------|
 | `web_search` | Search the web via Tavily API. Returns top 5 results with titles, URLs, and snippets. |
-| `fetch_url` | Fetch and extract text content from a URL. Truncates to 8,000 characters. |
+| `web_fetch` | Fetch and extract text content from a URL. Truncates to 8,000 characters. |
 | `submit_answer` | Submit explanation, exact answer, and confidence score for LLM grading. Ends the episode. |
 
-Note that the `fetch_url` and `web_search` tools require Tavily, but are optional. If you want to use a different provider for search you can exclude these tools and use external tools instead.
+Note that the `web_fetch` and `web_search` tools require Tavily, but are optional. If you want to use a different provider for search you can exclude these tools and use external tools instead.
 
 ## Time Horizon
 
