@@ -4,7 +4,7 @@
 
 ## Description
 
-OpenResearcher is an ORS environment for evaluating research question answering through web search. Based on the OpenResearcher dataset, agents are given diverse research questions and must use web search and URL fetching to find and synthesize answers. An LLM grader evaluates semantic correctness.
+OpenResearcher is an ORS environment for evaluating research question answering through web search. Based on the OpenResearcher dataset, agents are given diverse research questions and must use web search and URL fetching to find and synthesize answers. Search and fetch run over OpenReward's backdated web corpus (backsearch), with the cutoff fixed to the UTC date on which the session starts, so the agent sees the web as it stands that day. An LLM grader evaluates semantic correctness.
 
 ## Capabilities
 
@@ -14,7 +14,7 @@ OpenResearcher is an ORS environment for evaluating research question answering 
 
 ## Compute Requirements
 
-This is a multi-turn environment with no sandbox. Agents interact through web search and URL fetching tools only.
+This is a multi-turn environment with no sandbox. Agents interact through web search and URL fetching tools only, which are served by OpenReward's backsearch service over HTTP.
 
 ## License
 
@@ -47,11 +47,11 @@ Source: [OpenResearcher/OpenResearcher-Dataset](https://huggingface.co/datasets/
 
 | Tool | Description |
 |------|-------------|
-| `web_search` | Search the web via Tavily API. Returns top 5 results with titles, URLs, and snippets. |
-| `web_fetch` | Fetch and extract text content from a URL. Truncates to 8,000 characters. |
+| `web_search` | Search OpenReward's backdated web corpus as of the session's start date. Returns up to 8 hits, each with a title, URL and text snippet, fanned out over the backend's default corpora (news, SEC filings, Wikipedia, general web, live captures and arXiv). Supports `allowed_domains` or `blocked_domains` (not both). |
+| `web_fetch` | Fetch the archived text of a URL as it existed on or before the session's start date, applying a caller-supplied prompt. Returns up to 100,000 characters; cross-host redirects come back as a `REDIRECT DETECTED` notice to re-fetch. |
 | `submit_answer` | Submit explanation, exact answer, and confidence score for LLM grading. Ends the episode. |
 
-Note that the `web_fetch` and `web_search` tools require Tavily, but are optional. If you want to use a different provider for search you can exclude these tools and use external tools instead.
+The search tools are pinned to the backdated corpus (`BackSearchToolset`) rather than a switchable live-web provider, so the point-in-time guarantee cannot be turned off by an environment variable. The cutoff is set once per session in the environment's constructor and read by the toolset on every call.
 
 ## Time Horizon
 
@@ -64,9 +64,8 @@ OpenResearcher is a multi-turn environment. Agents search the web, fetch URLs fo
 ## Other Environment Requirements
 
 - **OpenAI API key**: Required for LLM-based answer grading via gpt-5-mini
-- **Tavily API key**: Required for web search and URL content extraction
 
-Pass via `secrets={"openai_api_key": "...", "tavily_api_key": "..."}`.
+Pass via `secrets={"openai_api_key": "..."}`.
 
 ## Safety
 

@@ -4,18 +4,28 @@ OpenResearcher Environment - Research question answering with web search
 A single-turn evaluation environment with 6,102 research questions requiring
 web search. Agents must research questions, then submit answers with explanation
 and confidence. Answers are graded by an LLM judge (gpt-5-mini).
+
+Search and fetch go through OpenReward's backdated web corpus (backsearch).
+The cutoff is the UTC date on which the session was created, so the agent sees
+the web as it stands today, and every search fans out over the backend's
+default corpora (news, SEC filings, Wikipedia, general web, live captures)
+rather than a single source.
 """
 
 import asyncio
+from datetime import datetime, timezone
 
 import pandas as pd
 import openai
 from pydantic import BaseModel, Field
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 
 from openreward.environments import Environment, JSONObject, TextBlock, ToolOutput, tool
-from openreward.toolsets import WebToolset
+from openreward.toolsets import BackSearchToolset
+from openreward.toolsets._web_common import WebFetchParams, WebSearchParams, to_tool_output
+from openreward.tools.web import FETCH_DESCRIPTION, SEARCH_DESCRIPTION, run_fetch, run_search
+from openreward.web_service import WebServiceConfig
 
 from constants import OPENRESEARCHER_PARQUET
 
@@ -119,6 +129,74 @@ def load_openresearcher_data() -> Dict[str, List[Dict]]:
 ALL_DATA = load_openresearcher_data()
 
 
+def today_utc_iso() -> str:
+    """Today's date in UTC as ISO ``YYYY-MM-DD`` — the backsearch cutoff.
+
+    UTC rather than the server's local date so every replica of the env agrees
+    on the cutoff regardless of the timezone it happens to run in.
+    """
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+class OpenResearcherBackSearch(BackSearchToolset):
+    """BackSearchToolset with three adjustments, all backdating-preserving.
+
+    First, the session's secrets (``api_key`` / ``openreward_api_key``) are
+    consulted when building the web-service config, falling back to the process
+    environment's ``OPENREWARD_API_KEY`` — the stock toolset reads the process
+    env only. Second, ``web_search`` passes ``include_snippets=True`` so results
+    carry text snippets instead of bare titles and URLs, letting the agent
+    triage hits without a fetch per candidate. Third, fatal backend errors (a
+    missing key, an exhausted quota) raise ``SearchBackendUnavailable`` instead
+    of becoming tool output: handed back as text, the agent would re-issue a
+    dead call until the turn cap and the rollout would score 0.0 as though the
+    model had answered wrongly, rather than being discarded as an
+    infrastructure failure.
+
+    The cutoff still resolves through the parent's ``_current_as_of``
+    (``env.web_as_of``, the UTC date the session was created) on every call.
+    No ``corpus`` is pinned, so the backend fans out over its default corpora
+    (news, SEC filings, Wikipedia, general web, live captures) — naming corpora
+    *replaces* that set rather than extending it, and a single-corpus pin is
+    exactly what this environment must avoid. Unlike ``WebToolset``, this
+    toolset cannot be switched to a live-web provider by an environment
+    variable.
+    """
+
+    def __init__(self, env: Optional[Any] = None, **kwargs: Any) -> None:
+        if kwargs.get("config") is None:
+            secrets = getattr(env, "search_secrets", None)
+            kwargs["config"] = WebServiceConfig.from_env(secrets)
+        super().__init__(env, **kwargs)
+
+    @tool
+    async def web_search(self, params: WebSearchParams) -> ToolOutput:
+        result = await run_search(
+            query=params.query,
+            as_of=self._current_as_of(),
+            allowed_domains=params.allowed_domains,
+            blocked_domains=params.blocked_domains,
+            config=self.config,
+            include_snippets=True,
+        )
+        return to_tool_output(result, raise_on_fatal=True)
+
+    @tool
+    async def web_fetch(self, params: WebFetchParams) -> ToolOutput:
+        result = await run_fetch(
+            url=params.url,
+            prompt=params.prompt,
+            as_of=self._current_as_of(),
+            config=self.config,
+        )
+        return to_tool_output(result, raise_on_fatal=True)
+
+
+# The environment framework reads ``fn.__doc__`` for each tool's description.
+OpenResearcherBackSearch.web_search.__doc__ = SEARCH_DESCRIPTION
+OpenResearcherBackSearch.web_fetch.__doc__ = FETCH_DESCRIPTION
+
+
 class OpenResearcher(Environment):
     """
     OpenResearcher environment: research questions with web search + LLM grading.
@@ -132,18 +210,11 @@ class OpenResearcher(Environment):
     6. Receives reward (1.0 correct, 0.0 incorrect) and feedback
     """
 
-    # web_search / web_fetch come from the SDK rather than being hand-rolled here.
-    # Which provider answers is process configuration (OPENREWARD_SEARCH_BACKEND,
-    # default "backsearch"), so changing search provider needs no change here.
-    #
-    # The toolset owns the error split too: an unfetchable page stays tool output
-    # the agent can act on, while a missing key or exhausted quota raises so the
-    # rollout ends with a blank reward rather than a score that reads as a bad answer.
-    toolsets = [WebToolset]
-
-    # Search hits keep their snippets, as the prompt promises. Off in the SDK by
-    # default, which would force a fetch per candidate just to triage results.
-    web_include_snippets = True
+    # web_search / web_fetch come from the SDK's backdated toolset, pinned to
+    # OpenReward's backsearch corpus. The cutoff (``web_as_of``) is set per
+    # session in ``__init__`` to the UTC date the session was created, and the
+    # toolset reads it live on every call.
+    toolsets = [OpenResearcherBackSearch]
 
     def __init__(self, task_spec: JSONObject, secrets: dict[str, str] = {}) -> None:
         """
@@ -151,8 +222,9 @@ class OpenResearcher(Environment):
 
         Args:
             task_spec: Task specification with qid, question, answer
-            secrets: Must contain "openai_api_key" for grading; search credentials
-                (api_key / tavily_api_key) are forwarded to the search backend
+            secrets: Must contain "openai_api_key" for grading. May contain
+                "api_key" (an OpenReward key) for backsearch; otherwise the
+                server process's OPENREWARD_API_KEY is used.
 
         Raises:
             ValueError: If required API keys missing or task_spec invalid
@@ -168,11 +240,23 @@ class OpenResearcher(Environment):
                 "Pass secrets={'openai_api_key': 'sk-...'} when creating session."
             )
 
-        # Read live by WebToolset on every tool call, so the search backend takes its
-        # credentials from the session rather than the server process. The configured
-        # backend picks the key it needs: `api_key` for backsearch, `tavily_api_key`
-        # for tavily. No up-front check — which key is required depends on the backend.
+        # Backsearch cutoff: the UTC date this session was created. Read live
+        # by OpenResearcherBackSearch on every tool call (it outranks the
+        # OPENREWARD_WEB_AS_OF env var), so the agent sees the web as it stood
+        # on the day it started researching.
+        self.web_as_of = today_utc_iso()
+
+        # Read by OpenResearcherBackSearch when it builds its config, so the
+        # backsearch key can come from the session rather than the process.
         self.search_secrets = secrets
+
+        # Fail fast if the backdated web service is unconfigured. Without this
+        # the first search would raise mid-rollout instead of at session start.
+        if WebServiceConfig.from_env(secrets) is None:
+            raise ValueError(
+                "Backdated web service is not configured: set OPENREWARD_API_KEY "
+                "in the server process environment (or pass api_key in secrets)."
+            )
 
         self.openai_client = openai.AsyncClient(api_key=openai_api_key)
 
