@@ -421,10 +421,11 @@ Your task is to research this question using web search and provide a comprehens
             if token.endswith("CORRECT"):
                 return True
 
-        # No verdict line at all — treat as incorrect, but say so, since a silent
-        # 0.0 here is indistinguishable from a genuinely wrong answer.
+        # No verdict line at all is a grader failure, not a wrong answer: raise so
+        # the call stays retryable instead of scoring 0.0. The response is
+        # written with the correct answer in view, so it is only logged here.
         print(f"GRADER WARNING: no CORRECT/INCORRECT verdict found in grader response: {grading_text[:200]!r}")
-        return False
+        raise RuntimeError("Grader response had no CORRECT/INCORRECT verdict")
 
     async def _grade_answer(
         self,
@@ -495,16 +496,14 @@ Your task is to research this question using web search and provide a comprehens
         reward = 1.0 if grading_result["is_correct"] else 0.0
         result_status = "✅ Correct" if grading_result["is_correct"] else "❌ Incorrect"
 
-        # Format display output for the agent
+        # Format display output for the agent. Neither the correct answer nor
+        # the grader's analysis (written with the correct answer in view) is
+        # shown.
         display_text = f"""{result_status}
-
-Grading Analysis:
-{grading_result['grading_response']}
 
 Your Confidence: {params.confidence:.2f}
 Reward: {reward:.1f}
 
-Expected Answer: {self.config.answer}
 Your Answer: {params.exact_answer}"""
 
         return ToolOutput(
@@ -512,11 +511,9 @@ Your Answer: {params.exact_answer}"""
             metadata={
                 "qid": self.config.qid,
                 "is_correct": grading_result["is_correct"],
-                "grading_response": grading_result["grading_response"],
                 "submitted_answer": params.exact_answer,
                 "submitted_explanation": params.explanation,
                 "confidence": params.confidence,
-                "correct_answer": self.config.answer,  # For analysis
                 "question": self.config.question,
             },
             reward=reward,
