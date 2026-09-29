@@ -69,7 +69,7 @@ async def run_task(environment, oai_client, task, tools, *, model, secrets, max_
                               + (f" (error={meta['error']})" if meta.get("error") else ""))
                     elif item.name == "submit_answer":
                         print(f"\n[turn {turn}] submit_answer: {args.get('exact_answer', '')!r} (confidence {args.get('confidence')})")
-                        print(f"    reward={reward} | expected={meta.get('correct_answer', '')!r}")
+                        print(f"    reward={reward} | expected={task.task_spec.get('answer', '')!r}")
 
                     input_list.append({
                         "type": "function_call_output",

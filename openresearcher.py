@@ -495,16 +495,14 @@ Your task is to research this question using web search and provide a comprehens
         reward = 1.0 if grading_result["is_correct"] else 0.0
         result_status = "✅ Correct" if grading_result["is_correct"] else "❌ Incorrect"
 
-        # Format display output for the agent
+        # Format display output for the agent. Neither the correct answer nor
+        # the grader's analysis (written with the correct answer in view) is
+        # shown.
         display_text = f"""{result_status}
-
-Grading Analysis:
-{grading_result['grading_response']}
 
 Your Confidence: {params.confidence:.2f}
 Reward: {reward:.1f}
 
-Expected Answer: {self.config.answer}
 Your Answer: {params.exact_answer}"""
 
         return ToolOutput(
@@ -512,11 +510,9 @@ Your Answer: {params.exact_answer}"""
             metadata={
                 "qid": self.config.qid,
                 "is_correct": grading_result["is_correct"],
-                "grading_response": grading_result["grading_response"],
                 "submitted_answer": params.exact_answer,
                 "submitted_explanation": params.explanation,
                 "confidence": params.confidence,
-                "correct_answer": self.config.answer,  # For analysis
                 "question": self.config.question,
             },
             reward=reward,
