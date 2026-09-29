@@ -421,10 +421,11 @@ Your task is to research this question using web search and provide a comprehens
             if token.endswith("CORRECT"):
                 return True
 
-        # No verdict line at all — treat as incorrect, but say so, since a silent
-        # 0.0 here is indistinguishable from a genuinely wrong answer.
+        # No verdict line at all is a grader failure, not a wrong answer: raise so
+        # the call stays retryable instead of scoring 0.0. The response is
+        # written with the correct answer in view, so it is only logged here.
         print(f"GRADER WARNING: no CORRECT/INCORRECT verdict found in grader response: {grading_text[:200]!r}")
-        return False
+        raise RuntimeError("Grader response had no CORRECT/INCORRECT verdict")
 
     async def _grade_answer(
         self,
