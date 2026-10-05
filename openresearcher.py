@@ -1,7 +1,7 @@
 """
 OpenResearcher Environment - Research question answering with web search
 
-A single-turn evaluation environment with 6,102 research questions requiring
+A single-turn evaluation environment with 6,100 research questions requiring
 web search. Agents must research questions, then submit answers with explanation
 and confidence. Answers are graded by an LLM judge (gpt-5-mini).
 
@@ -26,7 +26,14 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 from openreward.environments import Environment, JSONObject, TextBlock, ToolOutput, tool
 from openreward.toolsets import BackSearchToolset
 from openreward.toolsets._web_common import WebFetchParams, WebSearchParams, to_tool_output
-from openreward.tools.web import FETCH_DESCRIPTION, SEARCH_DESCRIPTION, WebToolResult, run_fetch, run_search
+from openreward.tools.web import (
+    FETCH_DESCRIPTION,
+    SEARCH_DESCRIPTION,
+    WebToolResult,
+    format_search_output,
+    run_fetch,
+    run_search,
+)
 from openreward.web_service import WebServiceConfig
 
 from constants import OPENRESEARCHER_PARQUET
@@ -81,6 +88,11 @@ class SubmitAnswerParams(BaseModel):
     )
 
 
+# Multiple-choice questions whose answer options are missing from the question
+# text, so the expected letter answer cannot be derived.
+EXCLUDED_QIDS = frozenset({"7924", "9682"})
+
+
 def load_openresearcher_data() -> Dict[str, List[Dict]]:
     """
     Load OpenResearcher dataset from parquet file.
@@ -113,6 +125,8 @@ def load_openresearcher_data() -> Dict[str, List[Dict]]:
 
     tasks = []
     for idx, row in df.iterrows():
+        if str(row['qid']) in EXCLUDED_QIDS:
+            continue
         try:
             tasks.append({
                 "qid": str(row['qid']),  # Ensure string
@@ -197,6 +211,56 @@ def _not_archived_result(url: str, as_of: Optional[str]) -> WebToolResult:
     )
 
 
+# (host, path prefix) pairs that serve the source datasets of this
+# environment's questions together with their answers: Hugging Face dataset
+# pages, its dataset viewer API and mirrors, and ModelScope datasets. Search
+# hits under them are dropped and fetches are refused. Hosts are compared
+# without a leading "www.", and an empty prefix blocks the whole host.
+BLOCKED_URL_PREFIXES = (
+    ("huggingface.co", "/datasets"),
+    ("huggingface.co", "/api/datasets"),
+    ("hf.co", "/datasets"),
+    ("hf-mirror.com", "/datasets"),
+    ("datasets-server.huggingface.co", ""),
+    ("modelscope.cn", "/datasets"),
+)
+
+
+def _is_blocked_url(url: str) -> bool:
+    """True if ``url`` falls under ``BLOCKED_URL_PREFIXES``."""
+    raw = url.strip()
+    if "://" not in raw:
+        raw = "https://" + raw
+    try:
+        parts = urlsplit(raw)
+        host = (parts.hostname or "").rstrip(".")
+    except ValueError:
+        return False
+    if host.startswith("www."):
+        host = host[4:]
+    path = unquote(parts.path).lower()
+    for blocked_host, prefix in BLOCKED_URL_PREFIXES:
+        if host != blocked_host:
+            continue
+        if not prefix or path == prefix or path.startswith(prefix + "/"):
+            return True
+    return False
+
+
+def _without_blocked_hits(result: WebToolResult) -> WebToolResult:
+    """Drop search hits whose URL is blocked, from both the text and the data."""
+    if not result.ok or not result.data:
+        return result
+    hits = result.data.get("hits") or []
+    kept = [h for h in hits if not (isinstance(h, dict) and _is_blocked_url(str(h.get("url") or "")))]
+    if len(kept) == len(hits):
+        return result
+    return WebToolResult.success(
+        format_search_output(result.data.get("query", ""), kept, include_snippets=True),
+        {**result.data, "hits": kept},
+    )
+
+
 def _drop_content_mirror(out: ToolOutput) -> ToolOutput:
     """Remove ``metadata["content"]``, a byte-identical copy of the text already
     in ``blocks``.
@@ -222,7 +286,7 @@ def _drop_content_mirror(out: ToolOutput) -> ToolOutput:
 
 
 class OpenResearcherBackSearch(BackSearchToolset):
-    """BackSearchToolset with five adjustments, all backdating-preserving.
+    """BackSearchToolset with six adjustments, all backdating-preserving.
 
     First, the session's secrets (``api_key`` / ``openreward_api_key``) are
     consulted when building the web-service config, falling back to the process
@@ -238,6 +302,8 @@ class OpenResearcherBackSearch(BackSearchToolset):
     cosmetic respellings of the URL (see ``_url_variants``), and a genuine miss
     returns an actionable ``page-not-archived`` message. Fifth, the redundant
     ``metadata["content"]`` mirror is dropped (see ``_drop_content_mirror``).
+    Sixth, dataset hosting pages are dropped from search results and refused by
+    fetch (see ``BLOCKED_URL_PREFIXES``).
 
     The cutoff still resolves through the parent's ``_current_as_of``
     (``env.web_as_of``, the UTC date the session was created) on every call.
@@ -265,10 +331,16 @@ class OpenResearcherBackSearch(BackSearchToolset):
             config=self.config,
             include_snippets=True,
         )
-        return to_tool_output(result, raise_on_fatal=True)
+        return to_tool_output(_without_blocked_hits(result), raise_on_fatal=True)
 
     @tool
     async def web_fetch(self, params: WebFetchParams) -> ToolOutput:
+        if _is_blocked_url(params.url):
+            return to_tool_output(WebToolResult.error(
+                "blocked-url",
+                f"{params.url} is a dataset hosting page and is not available in this "
+                f"environment. Choose a different source.",
+            ))
         as_of = self._current_as_of()
         result = await run_fetch(
             url=params.url, prompt=params.prompt, as_of=as_of, config=self.config
@@ -353,6 +425,10 @@ class OpenResearcher(Environment):
             )
 
         self.openai_client = openai.AsyncClient(api_key=openai_api_key)
+
+        # One graded answer per session; the lock also covers concurrent submits.
+        self._graded = False
+        self._grade_lock = asyncio.Lock()
 
     @classmethod
     def list_splits(cls) -> list[str]:
@@ -486,12 +562,20 @@ Your task is to research this question using web search and provide a comprehens
         Returns:
             ToolOutput with grading result, reward, and feedback
         """
-        # Grade the answer using LLM judge
-        grading_result = await self._grade_answer(
-            params.explanation,
-            params.exact_answer,
-            params.confidence
-        )
+        async with self._grade_lock:
+            if self._graded:
+                return ToolOutput(
+                    blocks=[TextBlock(type="text", text="An answer has already been graded for this task. This submission was not graded.")],
+                    reward=0.0,
+                    finished=False,
+                )
+            # Grade the answer using LLM judge
+            grading_result = await self._grade_answer(
+                params.explanation,
+                params.exact_answer,
+                params.confidence
+            )
+            self._graded = True
 
         reward = 1.0 if grading_result["is_correct"] else 0.0
         result_status = "✅ Correct" if grading_result["is_correct"] else "❌ Incorrect"
