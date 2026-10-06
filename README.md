@@ -24,7 +24,7 @@ This is a multi-turn environment with no sandbox. Agents interact through web se
 
 There is one split in this environment:
 
-- **Train**: 6,102 research questions
+- **Train**: 6,100 research questions (6,102 in the source file; two multiple-choice questions whose answer options are missing are excluded)
 
 Each task presents a research question requiring web search to answer. Questions span technical research, historical facts, art history, legislative research, and other domains.
 
@@ -49,7 +49,9 @@ Source: [OpenResearcher/OpenResearcher-Dataset](https://huggingface.co/datasets/
 |------|-------------|
 | `web_search` | Search OpenReward's backdated web corpus as of the session's start date. Returns up to 8 hits, each with a title, URL and text snippet, fanned out over the backend's default corpora (news, SEC filings, Wikipedia, general web, live captures and arXiv). Supports `allowed_domains` or `blocked_domains` (not both). |
 | `web_fetch` | Fetch the archived text of a URL as it existed on or before the session's start date, applying a caller-supplied prompt. Returns up to 100,000 characters; cross-host redirects come back as a `REDIRECT DETECTED` notice to re-fetch. |
-| `submit_answer` | Submit explanation, exact answer, and confidence score for LLM grading. Ends the episode. |
+| `submit_answer` | Submit explanation, exact answer, and confidence score for LLM grading. Ends the episode; only the first answer is graded. |
+
+Search hits on dataset hosting pages (Hugging Face and ModelScope datasets, the Hugging Face dataset viewer) are dropped and fetches of them are refused, since those pages carry the source questions with their answers.
 
 The search tools are pinned to the backdated corpus (`BackSearchToolset`) rather than a switchable live-web provider, so the point-in-time guarantee cannot be turned off by an environment variable. The cutoff is set once per session in the environment's constructor and read by the toolset on every call.
 
