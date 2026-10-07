@@ -24,7 +24,7 @@ This is a multi-turn environment with no sandbox. Agents interact through web se
 
 There is one split in this environment:
 
-- **Train**: 6,100 research questions (6,102 in the source file; two multiple-choice questions whose answer options are missing are excluded)
+- **Train**: 6,099 research questions (6,102 in the source file; two multiple-choice questions whose answer options are missing, and one asking for the latest version of a document that keeps being updated, are excluded)
 
 Each task presents a research question requiring web search to answer. Questions span technical research, historical facts, art history, legislative research, and other domains.
 

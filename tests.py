@@ -150,3 +150,8 @@ def test_tasks_without_options_excluded():
     assert not set(qids) & openresearcher.EXCLUDED_QIDS
     assert len(qids) == len(set(qids))
     assert qids == [t["qid"] for t in OpenResearcher.list_tasks("train")]
+
+
+def test_stale_latest_version_question_excluded():
+    qids = {t["qid"] for t in OpenResearcher.list_tasks("train")}
+    assert "207" not in qids
