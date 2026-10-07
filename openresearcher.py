@@ -89,8 +89,10 @@ class SubmitAnswerParams(BaseModel):
 
 
 # Multiple-choice questions whose answer options are missing from the question
-# text, so the expected letter answer cannot be derived.
-EXCLUDED_QIDS = frozenset({"7924", "9682"})
+# text, so the expected letter answer cannot be derived (7924, 9682), and
+# questions asking for the latest version of a document that keeps being
+# updated, whose fixed answer goes stale (207).
+EXCLUDED_QIDS = frozenset({"207", "7924", "9682"})
 
 
 def load_openresearcher_data() -> Dict[str, List[Dict]]:
